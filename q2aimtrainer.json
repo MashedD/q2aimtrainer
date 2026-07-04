@@ -2,5 +2,8 @@
   "fov": 90.0,
   "sensitivity": 3.0,
   "m_yaw": 0.022,
-  "m_pitch": 0.022
+  "m_pitch": 0.022,
+  "crosshair": "assets/ch9.png",
+  "crosshair_scale": 1.0,
+  "crosshair_color": [110, 250, 255, 255]
 }

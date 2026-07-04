@@ -32,4 +32,5 @@ cp -f "${build_dir}/q2aimtrainer" dist/q2aimtrainer
 if [[ ! -f dist/q2aimtrainer.json ]]; then
   cp -f q2aimtrainer.json dist/q2aimtrainer.json
 fi
+cp -a assets dist/
 echo "dist/q2aimtrainer ready"

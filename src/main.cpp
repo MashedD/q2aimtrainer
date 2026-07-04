@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <string>
 #include <vector>
 
 using json = nlohmann::json;
@@ -56,7 +57,35 @@ struct Config {
     float sensitivity = kDefaultSensitivity;
     float mYaw = kMYaw;
     float mPitch = kMPitch;
+    std::string crosshair = "assets/ch9.png";
+    float crosshairScale = 1.0f;
+    Color crosshairColor = Color{110, 250, 255, 255};
 };
+
+struct Crosshair {
+    Texture2D texture{};
+    bool loaded = false;
+};
+
+static json ColorJson(Color color) {
+    return json::array({color.r, color.g, color.b, color.a});
+}
+
+static Color ParseColor(const json &data, Color fallback) {
+    if (!data.is_array() || data.size() < 3) return fallback;
+
+    const auto component = [&](size_t index) {
+        const int value = data[index].get<int>();
+        return static_cast<unsigned char>(std::clamp(value, 0, 255));
+    };
+
+    return Color{
+        component(0),
+        component(1),
+        component(2),
+        data.size() >= 4 ? component(3) : fallback.a,
+    };
+}
 
 static json ConfigJson(const Config &config) {
     return json{
@@ -64,6 +93,9 @@ static json ConfigJson(const Config &config) {
         {"sensitivity", config.sensitivity},
         {"m_yaw", config.mYaw},
         {"m_pitch", config.mPitch},
+        {"crosshair", config.crosshair},
+        {"crosshair_scale", config.crosshairScale},
+        {"crosshair_color", ColorJson(config.crosshairColor)},
     };
 }
 
@@ -89,6 +121,9 @@ static Config LoadConfig() {
         config.sensitivity = data.value("sensitivity", config.sensitivity);
         config.mYaw = data.value("m_yaw", config.mYaw);
         config.mPitch = data.value("m_pitch", config.mPitch);
+        config.crosshair = data.value("crosshair", config.crosshair);
+        config.crosshairScale = data.value("crosshair_scale", config.crosshairScale);
+        if (data.contains("crosshair_color")) config.crosshairColor = ParseColor(data["crosshair_color"], config.crosshairColor);
     } catch (const std::exception &e) {
         std::cerr << "Failed to read " << path << ": " << e.what() << '\n';
     }
@@ -97,7 +132,30 @@ static Config LoadConfig() {
     config.sensitivity = std::clamp(config.sensitivity, 0.1f, 20.0f);
     config.mYaw = std::clamp(config.mYaw, 0.001f, 0.2f);
     config.mPitch = std::clamp(config.mPitch, 0.001f, 0.2f);
+    config.crosshairScale = std::clamp(config.crosshairScale, 0.25f, 8.0f);
     return config;
+}
+
+static fs::path ResolveAppPath(const std::string &path) {
+    fs::path result(path);
+    if (result.is_relative()) result = fs::path(GetApplicationDirectory()) / result;
+    return result;
+}
+
+static Crosshair LoadCrosshair(const Config &config) {
+    Crosshair crosshair;
+    if (config.crosshair.empty()) return crosshair;
+
+    const fs::path path = ResolveAppPath(config.crosshair);
+    if (path.extension() != ".png") {
+        std::cerr << "Only .png crosshairs are supported: " << path << '\n';
+        return crosshair;
+    }
+
+    crosshair.texture = LoadTexture(path.string().c_str());
+    crosshair.loaded = crosshair.texture.id != 0;
+    if (!crosshair.loaded) std::cerr << "Failed to load crosshair: " << path << '\n';
+    return crosshair;
 }
 
 static float DegToRad(float degrees) {
@@ -196,9 +254,23 @@ static void DrawArena() {
     }
 }
 
-static void DrawCrosshair() {
+static void DrawCrosshair(const Crosshair &crosshair, const Config &config) {
     const int cx = GetScreenWidth() / 2;
     const int cy = GetScreenHeight() / 2;
+    if (crosshair.loaded) {
+        const float width = static_cast<float>(crosshair.texture.width) * config.crosshairScale;
+        const float height = static_cast<float>(crosshair.texture.height) * config.crosshairScale;
+        DrawTexturePro(
+            crosshair.texture,
+            {0.0f, 0.0f, static_cast<float>(crosshair.texture.width), static_cast<float>(crosshair.texture.height)},
+            {static_cast<float>(cx), static_cast<float>(cy), width, height},
+            {width * 0.5f, height * 0.5f},
+            0.0f,
+            config.crosshairColor
+        );
+        return;
+    }
+
     const Color cyan = Color{110, 250, 255, 255};
     DrawLine(cx - 14, cy, cx - 5, cy, cyan);
     DrawLine(cx + 5, cy, cx + 14, cy, cyan);
@@ -237,6 +309,7 @@ int main() {
     SetTargetFPS(240);
 
     Config config = LoadConfig();
+    Crosshair crosshair = LoadCrosshair(config);
 
     std::mt19937 rng(std::random_device{}());
     std::vector<Bubble> bubbles;
@@ -304,10 +377,11 @@ int main() {
             DrawSphereWires(bubble.position, bubble.radius * 1.08f, 16, 16, Color{255, 255, 255, 180});
         }
         EndMode3D();
-        DrawCrosshair();
+        DrawCrosshair(crosshair, config);
         DrawHud(stats, config);
         EndDrawing();
     }
 
+    if (crosshair.loaded) UnloadTexture(crosshair.texture);
     CloseWindow();
 }
