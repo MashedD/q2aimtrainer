@@ -11,6 +11,7 @@ Stationary 3D Quake II-style aim trainer. Built with the same core stack as `q2m
 - Default `fov 90`
 - JSON config beside the executable for FOV and mouse tuning
 - PNG crosshair with configurable scale and RGBA tint
+- Quake-style six-face TGA skybox support
 - HUD with hits, misses, accuracy, time, and hits/min
 
 ## Controls
@@ -34,11 +35,16 @@ Edit `q2aimtrainer.json` beside the executable, then restart the trainer:
   "m_pitch": 0.022,
   "crosshair": "assets/ch9.png",
   "crosshair_scale": 1.0,
-  "crosshair_color": [110, 250, 255, 255]
+  "crosshair_color": [110, 250, 255, 255],
+  "skybox": "assets/space1",
+  "skybox_size": 96.0,
+  "skybox_tint": [255, 255, 255, 255]
 }
 ```
 
 `crosshair` supports `.png` files. Relative paths are resolved from the executable directory, so `assets/ch9.png` points to `dist/assets/ch9.png` when running the dist build. `crosshair_color` is `[red, green, blue, alpha]`, with each value from `0` to `255`.
+
+`skybox` is a Quake-style skybox prefix. `"assets/space1"` loads `space1ft.tga`, `space1rt.tga`, `space1bk.tga`, `space1lf.tga`, `space1up.tga`, and `space1dn.tga` from `dist/assets`. Set it to an empty string to disable the skybox.
 
 `./build-lin.sh` copies the default config to `dist/q2aimtrainer.json` only if it does not already exist, so your local tuning is preserved across rebuilds.
 

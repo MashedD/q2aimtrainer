@@ -9,6 +9,7 @@
 #endif
 
 #include "raymath.h"
+#include "rlgl.h"
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -62,10 +63,21 @@ struct Config {
     std::string crosshair = "assets/ch9.png";
     float crosshairScale = 1.0f;
     Color crosshairColor = Color{110, 250, 255, 255};
+    std::string skybox = "assets/space1";
+    float skyboxSize = 96.0f;
+    Color skyboxTint = WHITE;
 };
 
 struct Crosshair {
     Texture2D texture{};
+    bool loaded = false;
+};
+
+struct Skybox {
+    Model model{};
+    TextureCubemap cubemap{};
+    Shader shader{};
+    std::string status = "skybox off";
     bool loaded = false;
 };
 
@@ -98,6 +110,9 @@ static json ConfigJson(const Config &config) {
         {"crosshair", config.crosshair},
         {"crosshair_scale", config.crosshairScale},
         {"crosshair_color", ColorJson(config.crosshairColor)},
+        {"skybox", config.skybox},
+        {"skybox_size", config.skyboxSize},
+        {"skybox_tint", ColorJson(config.skyboxTint)},
     };
 }
 
@@ -126,6 +141,9 @@ static Config LoadConfig() {
         config.crosshair = data.value("crosshair", config.crosshair);
         config.crosshairScale = data.value("crosshair_scale", config.crosshairScale);
         if (data.contains("crosshair_color")) config.crosshairColor = ParseColor(data["crosshair_color"], config.crosshairColor);
+        config.skybox = data.value("skybox", config.skybox);
+        config.skyboxSize = data.value("skybox_size", config.skyboxSize);
+        if (data.contains("skybox_tint")) config.skyboxTint = ParseColor(data["skybox_tint"], config.skyboxTint);
     } catch (const std::exception &e) {
         std::cerr << "Failed to read " << path << ": " << e.what() << '\n';
     }
@@ -135,6 +153,7 @@ static Config LoadConfig() {
     config.mYaw = std::clamp(config.mYaw, 0.001f, 0.2f);
     config.mPitch = std::clamp(config.mPitch, 0.001f, 0.2f);
     config.crosshairScale = std::clamp(config.crosshairScale, 0.25f, 8.0f);
+    config.skyboxSize = std::clamp(config.skyboxSize, 32.0f, 512.0f);
     return config;
 }
 
@@ -158,6 +177,131 @@ static Crosshair LoadCrosshair(const Config &config) {
     crosshair.loaded = crosshair.texture.id != 0;
     if (!crosshair.loaded) std::cerr << "Failed to load crosshair: " << path << '\n';
     return crosshair;
+}
+
+static fs::path SkyboxFacePath(const std::string &base, const char *suffix) {
+    fs::path path = ResolveAppPath(base);
+    return path.parent_path() / (path.filename().string() + suffix + ".tga");
+}
+
+static Image LoadSkyboxStrip(const Config &config, std::string &error) {
+    // raylib cubemaps expect vertical faces in this order: +X, -X, +Y, -Y, +Z, -Z.
+    constexpr std::array<const char *, 6> suffixes = {"rt", "lf", "up", "dn", "bk", "ft"};
+
+    std::array<Image, 6> faces{};
+    int faceSize = 0;
+    for (size_t i = 0; i < suffixes.size(); ++i) {
+        const fs::path path = SkyboxFacePath(config.skybox, suffixes[i]);
+        faces[i] = LoadImage(path.string().c_str());
+        if (faces[i].data == nullptr) {
+            error = "skybox load failed: " + path.filename().string();
+            for (size_t j = 0; j < i; ++j) UnloadImage(faces[j]);
+            return {};
+        }
+
+        if (i == 0) faceSize = faces[i].width;
+        if (faces[i].width != faceSize || faces[i].height != faceSize) {
+            error = "skybox face size mismatch: " + path.filename().string();
+            for (size_t j = 0; j <= i; ++j) UnloadImage(faces[j]);
+            return {};
+        }
+        ImageFormat(&faces[i], PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+
+        if (i == 2 || i == 3) ImageRotate(&faces[i], 180);
+    }
+
+    Image strip = GenImageColor(faceSize, faceSize * 6, BLANK);
+    ImageFormat(&strip, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    constexpr float skyboxEdgeCrop = 2.0f;
+    for (int i = 0; i < 6; ++i) {
+        ImageDraw(
+            &strip,
+            faces[static_cast<size_t>(i)],
+            {skyboxEdgeCrop, skyboxEdgeCrop, static_cast<float>(faceSize) - skyboxEdgeCrop * 2.0f, static_cast<float>(faceSize) - skyboxEdgeCrop * 2.0f},
+            {0.0f, static_cast<float>(faceSize * i), static_cast<float>(faceSize), static_cast<float>(faceSize)},
+            WHITE
+        );
+        UnloadImage(faces[static_cast<size_t>(i)]);
+    }
+
+    return strip;
+}
+
+static Skybox LoadSkybox(const Config &config) {
+    Skybox skybox;
+    if (config.skybox.empty()) return skybox;
+
+    std::string error;
+    Image strip = LoadSkyboxStrip(config, error);
+    if (strip.data == nullptr) {
+        skybox.status = error;
+        std::cerr << skybox.status << '\n';
+        return skybox;
+    }
+
+    skybox.cubemap = LoadTextureCubemap(strip, CUBEMAP_LAYOUT_LINE_VERTICAL);
+    UnloadImage(strip);
+    if (skybox.cubemap.id == 0) {
+        skybox.status = "skybox cubemap failed";
+        std::cerr << skybox.status << '\n';
+        return skybox;
+    }
+    SetTextureWrap(skybox.cubemap, TEXTURE_WRAP_CLAMP);
+    SetTextureFilter(skybox.cubemap, TEXTURE_FILTER_POINT);
+
+    constexpr const char *skyboxVs = R"glsl(
+#version 330
+in vec3 vertexPosition;
+uniform mat4 matProjection;
+uniform mat4 matView;
+out vec3 fragPosition;
+void main()
+{
+    fragPosition = vertexPosition;
+    mat4 rotView = mat4(mat3(matView));
+    vec4 clipPos = matProjection*rotView*vec4(vertexPosition, 1.0);
+    gl_Position = clipPos.xyww;
+}
+)glsl";
+
+    constexpr const char *skyboxFs = R"glsl(
+#version 330
+in vec3 fragPosition;
+uniform samplerCube environmentMap;
+uniform vec4 skyboxTint;
+out vec4 finalColor;
+void main()
+{
+    finalColor = texture(environmentMap, fragPosition)*skyboxTint;
+}
+)glsl";
+
+    skybox.shader = LoadShaderFromMemory(skyboxVs, skyboxFs);
+    const int environmentMap = MATERIAL_MAP_CUBEMAP;
+    SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "environmentMap"), &environmentMap, SHADER_UNIFORM_INT);
+    const float tint[4] = {
+        static_cast<float>(config.skyboxTint.r) / 255.0f,
+        static_cast<float>(config.skyboxTint.g) / 255.0f,
+        static_cast<float>(config.skyboxTint.b) / 255.0f,
+        static_cast<float>(config.skyboxTint.a) / 255.0f,
+    };
+    SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "skyboxTint"), tint, SHADER_UNIFORM_VEC4);
+
+    skybox.model = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
+    skybox.model.materials[0].shader = skybox.shader;
+    skybox.model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = skybox.cubemap;
+
+    skybox.loaded = true;
+    skybox.status = "skybox " + config.skybox;
+    return skybox;
+}
+
+static void UnloadSkybox(Skybox &skybox) {
+    if (!skybox.loaded) return;
+    UnloadShader(skybox.shader);
+    UnloadTexture(skybox.cubemap);
+    UnloadModel(skybox.model);
+    skybox.loaded = false;
 }
 
 static float DegToRad(float degrees) {
@@ -253,16 +397,23 @@ static int ShootBubble(const Camera3D &camera, std::vector<Bubble> &bubbles) {
     return hitIndex;
 }
 
-static void DrawArena() {
+static void DrawSkybox(const Skybox &skybox, const Config &config, const Camera3D &camera) {
+    (void)config;
+    (void)camera;
+    if (!skybox.loaded) return;
+
+    rlDisableDepthMask();
+    rlDisableBackfaceCulling();
+    DrawModel(skybox.model, {0.0f, 0.0f, 0.0f}, 1.0f, WHITE);
+    rlEnableBackfaceCulling();
+    rlEnableDepthMask();
+}
+
+static void DrawArena(const Skybox &skybox, const Config &config, const Camera3D &camera) {
     ClearBackground(Color{5, 7, 11, 255});
+    DrawSkybox(skybox, config, camera);
     DrawPlane({0.0f, -0.02f, 12.0f}, {64.0f, 64.0f}, Color{15, 18, 24, 255});
     DrawGrid(64, 1.0f);
-
-    for (int i = -4; i <= 4; ++i) {
-        const float x = static_cast<float>(i) * 6.0f;
-        DrawCubeWires({x, 3.0f, 24.0f}, 0.05f, 6.0f, 0.05f, Color{40, 130, 150, 120});
-        DrawCubeWires({x, 0.05f, 24.0f}, 0.05f, 0.05f, 24.0f, Color{40, 130, 150, 90});
-    }
 }
 
 static void DrawCrosshair(const Crosshair &crosshair, const Config &config) {
@@ -290,14 +441,14 @@ static void DrawCrosshair(const Crosshair &crosshair, const Config &config) {
     DrawCircleLines(cx, cy, 3.0f, Color{255, 255, 255, 210});
 }
 
-static void DrawHud(const Stats &stats, const Config &config) {
+static void DrawHud(const Stats &stats, const Config &config, const Skybox &skybox) {
     const double elapsed = std::max(0.001, GetTime() - stats.startedAt);
     const int shots = stats.hits + stats.misses;
     const float accuracy = shots > 0 ? 100.0f * static_cast<float>(stats.hits) / static_cast<float>(shots) : 100.0f;
     const float hpm = static_cast<float>(stats.hits) * 60.0f / static_cast<float>(elapsed);
 
-    DrawRectangle(18, 16, 330, 136, Color{4, 8, 12, 190});
-    DrawRectangleLinesEx({18.0f, 16.0f, 330.0f, 136.0f}, 2.0f, Color{80, 220, 255, 255});
+    DrawRectangle(18, 16, 430, 162, Color{4, 8, 12, 190});
+    DrawRectangleLinesEx({18.0f, 16.0f, 430.0f, 162.0f}, 2.0f, Color{80, 220, 255, 255});
 
     char line[160]{};
     std::snprintf(line, sizeof(line), "hits %d   misses %d   acc %.1f%%", stats.hits, stats.misses, accuracy);
@@ -308,6 +459,8 @@ static void DrawHud(const Stats &stats, const Config &config) {
     DrawText(line, 34, 84, 20, Color{170, 220, 230, 255});
     std::snprintf(line, sizeof(line), "m_yaw %.3f   m_pitch %.3f", config.mYaw, config.mPitch);
     DrawText(line, 34, 110, 20, Color{170, 220, 230, 255});
+    std::snprintf(line, sizeof(line), "%s", skybox.status.c_str());
+    DrawText(line, 34, 136, 20, skybox.loaded ? Color{170, 220, 230, 255} : Color{255, 120, 120, 255});
 
     DrawText("LMB shoot   R reset   -/= sens   F11 fullscreen   Esc quit", 18, GetScreenHeight() - 32, 18, Color{170, 220, 230, 230});
 }
@@ -321,6 +474,7 @@ int main() {
 
     Config config = LoadConfig();
     Crosshair crosshair = LoadCrosshair(config);
+    Skybox skybox = LoadSkybox(config);
 
     std::mt19937 rng(std::random_device{}());
     std::vector<Bubble> bubbles;
@@ -384,17 +538,18 @@ int main() {
 
         BeginDrawing();
         BeginMode3D(camera);
-        DrawArena();
+        DrawArena(skybox, config, camera);
         for (const Bubble &bubble : bubbles) {
             DrawSphere(bubble.position, bubble.radius, bubble.color);
             DrawSphereWires(bubble.position, bubble.radius * 1.08f, 16, 16, Color{255, 255, 255, 180});
         }
         EndMode3D();
         DrawCrosshair(crosshair, config);
-        DrawHud(stats, config);
+        DrawHud(stats, config, skybox);
         EndDrawing();
     }
 
     if (crosshair.loaded) UnloadTexture(crosshair.texture);
+    UnloadSkybox(skybox);
     CloseWindow();
 }
