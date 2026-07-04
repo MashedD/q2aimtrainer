@@ -56,6 +56,7 @@ struct Stats {
 };
 
 struct Config {
+    std::string theme = "cyber";
     float fov = kDefaultFov;
     float sensitivity = kDefaultSensitivity;
     float mYaw = kMYaw;
@@ -72,6 +73,65 @@ struct Crosshair {
     Texture2D texture{};
     bool loaded = false;
 };
+
+struct ThemePalette {
+    const char *id;
+    Color hudPanel;
+    Color hudBorder;
+    Color hudText;
+    Color hudMuted;
+    Color hudError;
+    Color floor;
+    Color grid;
+    Color fallbackCrosshair;
+    std::array<Color, 5> bubbleColors;
+};
+
+static const std::array<ThemePalette, 2> kThemes = {{
+    {
+        "cyber",
+        Color{4, 8, 12, 190},
+        Color{80, 220, 255, 255},
+        Color{220, 245, 255, 255},
+        Color{170, 220, 230, 255},
+        Color{255, 120, 120, 255},
+        Color{15, 18, 24, 255},
+        Color{190, 220, 230, 255},
+        Color{110, 250, 255, 255},
+        {{
+            Color{80, 220, 255, 255},
+            Color{255, 95, 210, 255},
+            Color{120, 255, 120, 255},
+            Color{255, 210, 80, 255},
+            Color{180, 130, 255, 255},
+        }},
+    },
+    {
+        "matrix",
+        Color{0, 12, 3, 210},
+        Color{65, 255, 90, 255},
+        Color{210, 255, 215, 255},
+        Color{120, 230, 135, 255},
+        Color{255, 95, 95, 255},
+        Color{1, 10, 3, 255},
+        Color{75, 255, 95, 230},
+        Color{65, 255, 90, 255},
+        {{
+            Color{65, 255, 90, 255},
+            Color{150, 255, 90, 255},
+            Color{35, 210, 70, 255},
+            Color{210, 255, 120, 255},
+            Color{145, 255, 185, 255},
+        }},
+    },
+}};
+
+static const ThemePalette &Theme(const Config &config) {
+    for (const ThemePalette &theme : kThemes) {
+        if (config.theme == theme.id) return theme;
+    }
+    return kThemes[0];
+}
 
 struct Skybox {
     Model model{};
@@ -103,6 +163,7 @@ static Color ParseColor(const json &data, Color fallback) {
 
 static json ConfigJson(const Config &config) {
     return json{
+        {"theme", config.theme},
         {"fov", config.fov},
         {"sensitivity", config.sensitivity},
         {"m_yaw", config.mYaw},
@@ -134,6 +195,7 @@ static Config LoadConfig() {
 
     try {
         const json data = json::parse(in);
+        config.theme = data.value("theme", config.theme);
         config.fov = data.value("fov", config.fov);
         config.sensitivity = data.value("sensitivity", config.sensitivity);
         config.mYaw = data.value("m_yaw", config.mYaw);
@@ -333,21 +395,14 @@ static Vector3 RandomBubblePositionInView(std::mt19937 &rng, const Camera3D &cam
     return fallback;
 }
 
-static Color BubbleColor(int index) {
-    constexpr std::array<Color, 5> colors = {
-        Color{80, 220, 255, 255},
-        Color{255, 95, 210, 255},
-        Color{120, 255, 120, 255},
-        Color{255, 210, 80, 255},
-        Color{180, 130, 255, 255},
-    };
-    return colors[static_cast<size_t>(index) % colors.size()];
+static Color BubbleColor(int index, const ThemePalette &theme) {
+    return theme.bubbleColors[static_cast<size_t>(index) % theme.bubbleColors.size()];
 }
 
-static void ResetBubbles(std::vector<Bubble> &bubbles, std::mt19937 &rng, const Camera3D &camera) {
+static void ResetBubbles(std::vector<Bubble> &bubbles, std::mt19937 &rng, const Camera3D &camera, const ThemePalette &theme) {
     bubbles.clear();
     for (int i = 0; i < kBubbleCount; ++i) {
-        bubbles.push_back({RandomBubblePositionInView(rng, camera), kBubbleRadius, BubbleColor(i)});
+        bubbles.push_back({RandomBubblePositionInView(rng, camera), kBubbleRadius, BubbleColor(i, theme)});
     }
 }
 
@@ -410,13 +465,25 @@ static void DrawSkybox(const Skybox &skybox, const Config &config, const Camera3
 }
 
 static void DrawArena(const Skybox &skybox, const Config &config, const Camera3D &camera) {
+    const ThemePalette &theme = Theme(config);
     ClearBackground(Color{5, 7, 11, 255});
     DrawSkybox(skybox, config, camera);
-    DrawPlane({0.0f, -0.02f, 12.0f}, {64.0f, 64.0f}, Color{15, 18, 24, 255});
-    DrawGrid(64, 1.0f);
+    DrawPlane({0.0f, -0.02f, 12.0f}, {64.0f, 64.0f}, theme.floor);
+    rlPushMatrix();
+    rlBegin(RL_LINES);
+    rlColor4ub(theme.grid.r, theme.grid.g, theme.grid.b, theme.grid.a);
+    for (int i = -32; i <= 32; ++i) {
+        rlVertex3f(static_cast<float>(i), 0.0f, -20.0f);
+        rlVertex3f(static_cast<float>(i), 0.0f, 44.0f);
+        rlVertex3f(-32.0f, 0.0f, static_cast<float>(i) + 12.0f);
+        rlVertex3f(32.0f, 0.0f, static_cast<float>(i) + 12.0f);
+    }
+    rlEnd();
+    rlPopMatrix();
 }
 
 static void DrawCrosshair(const Crosshair &crosshair, const Config &config) {
+    const ThemePalette &theme = Theme(config);
     const int cx = GetScreenWidth() / 2;
     const int cy = GetScreenHeight() / 2;
     if (crosshair.loaded) {
@@ -433,7 +500,7 @@ static void DrawCrosshair(const Crosshair &crosshair, const Config &config) {
         return;
     }
 
-    const Color cyan = Color{110, 250, 255, 255};
+    const Color cyan = theme.fallbackCrosshair;
     DrawLine(cx - 14, cy, cx - 5, cy, cyan);
     DrawLine(cx + 5, cy, cx + 14, cy, cyan);
     DrawLine(cx, cy - 14, cx, cy - 5, cyan);
@@ -442,27 +509,28 @@ static void DrawCrosshair(const Crosshair &crosshair, const Config &config) {
 }
 
 static void DrawHud(const Stats &stats, const Config &config, const Skybox &skybox) {
+    const ThemePalette &theme = Theme(config);
     const double elapsed = std::max(0.001, GetTime() - stats.startedAt);
     const int shots = stats.hits + stats.misses;
     const float accuracy = shots > 0 ? 100.0f * static_cast<float>(stats.hits) / static_cast<float>(shots) : 100.0f;
     const float hpm = static_cast<float>(stats.hits) * 60.0f / static_cast<float>(elapsed);
 
-    DrawRectangle(18, 16, 430, 162, Color{4, 8, 12, 190});
-    DrawRectangleLinesEx({18.0f, 16.0f, 430.0f, 162.0f}, 2.0f, Color{80, 220, 255, 255});
+    DrawRectangle(18, 16, 430, 162, theme.hudPanel);
+    DrawRectangleLinesEx({18.0f, 16.0f, 430.0f, 162.0f}, 2.0f, theme.hudBorder);
 
     char line[160]{};
     std::snprintf(line, sizeof(line), "hits %d   misses %d   acc %.1f%%", stats.hits, stats.misses, accuracy);
-    DrawText(line, 34, 32, 20, Color{220, 245, 255, 255});
+    DrawText(line, 34, 32, 20, theme.hudText);
     std::snprintf(line, sizeof(line), "hits/min %.1f   time %.1fs", hpm, elapsed);
-    DrawText(line, 34, 58, 20, Color{170, 220, 230, 255});
+    DrawText(line, 34, 58, 20, theme.hudMuted);
     std::snprintf(line, sizeof(line), "fov %.0f   sens %.2f", config.fov, config.sensitivity);
-    DrawText(line, 34, 84, 20, Color{170, 220, 230, 255});
+    DrawText(line, 34, 84, 20, theme.hudMuted);
     std::snprintf(line, sizeof(line), "m_yaw %.3f   m_pitch %.3f", config.mYaw, config.mPitch);
-    DrawText(line, 34, 110, 20, Color{170, 220, 230, 255});
+    DrawText(line, 34, 110, 20, theme.hudMuted);
     std::snprintf(line, sizeof(line), "%s", skybox.status.c_str());
-    DrawText(line, 34, 136, 20, skybox.loaded ? Color{170, 220, 230, 255} : Color{255, 120, 120, 255});
+    DrawText(line, 34, 136, 20, skybox.loaded ? theme.hudMuted : theme.hudError);
 
-    DrawText("LMB shoot   R reset   -/= sens   F11 fullscreen   Esc quit", 18, GetScreenHeight() - 32, 18, Color{170, 220, 230, 230});
+    DrawText("LMB shoot   R reset   -/= sens   F11 fullscreen   Esc quit", 18, GetScreenHeight() - 32, 18, Color{theme.hudMuted.r, theme.hudMuted.g, theme.hudMuted.b, 230});
 }
 
 int main() {
@@ -473,6 +541,7 @@ int main() {
     SetTargetFPS(240);
 
     Config config = LoadConfig();
+    const ThemePalette &theme = Theme(config);
     Crosshair crosshair = LoadCrosshair(config);
     Skybox skybox = LoadSkybox(config);
 
@@ -491,7 +560,7 @@ int main() {
     float yaw = 0.0f;
     float pitch = 0.0f;
     camera.target = Vector3Add(camera.position, ForwardFromAngles(yaw, pitch));
-    ResetBubbles(bubbles, rng, camera);
+    ResetBubbles(bubbles, rng, camera, theme);
 
     double lowVisibleBubblesSince = 0.0;
 
@@ -499,7 +568,7 @@ int main() {
         if (IsKeyPressed(KEY_F11)) ToggleFullscreenWindow();
         if (IsKeyPressed(KEY_R)) {
             ResetStats(stats);
-            ResetBubbles(bubbles, rng, camera);
+            ResetBubbles(bubbles, rng, camera, theme);
         }
         if (IsKeyPressed(KEY_MINUS)) config.sensitivity = std::max(0.1f, config.sensitivity - 0.1f);
         if (IsKeyPressed(KEY_EQUAL)) config.sensitivity = std::min(20.0f, config.sensitivity + 0.1f);

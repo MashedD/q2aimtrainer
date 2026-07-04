@@ -10,6 +10,7 @@ Stationary 3D Quake II-style aim trainer. Built with the same core stack as `q2m
 - Quake-style mouse constants: `m_yaw 0.022`, `m_pitch 0.022`
 - Default `fov 90`
 - JSON config beside the executable for FOV and mouse tuning
+- Themes: `cyber` and neon-green `matrix`
 - PNG crosshair with configurable scale and RGBA tint
 - Quake-style six-face TGA skybox support
 - HUD with hits, misses, accuracy, time, and hits/min
@@ -29,6 +30,7 @@ Edit `q2aimtrainer.json` beside the executable, then restart the trainer:
 
 ```json
 {
+  "theme": "cyber",
   "fov": 90.0,
   "sensitivity": 3.0,
   "m_yaw": 0.022,
@@ -41,6 +43,8 @@ Edit `q2aimtrainer.json` beside the executable, then restart the trainer:
   "skybox_tint": [255, 255, 255, 255]
 }
 ```
+
+`theme` supports `cyber` and `matrix`. The theme changes HUD, floor/grid, fallback crosshair, and bubble colors. Explicit `crosshair_color` and `skybox_tint` still override those specific colors.
 
 `crosshair` supports `.png` files. Relative paths are resolved from the executable directory, so `assets/ch9.png` points to `dist/assets/ch9.png` when running the dist build. `crosshair_color` is `[red, green, blue, alpha]`, with each value from `0` to `255`.
 
