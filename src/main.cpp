@@ -38,6 +38,8 @@ constexpr float kMPitch = 0.022f;
 constexpr float kDefaultSensitivity = 3.0f;
 constexpr int kBubbleCount = 8;
 constexpr float kBubbleRadius = 0.42f;
+constexpr float kMinBubbleHeight = 1.1f;
+constexpr float kMaxBubbleHeight = 6.5f;
 constexpr float kPi = 3.14159265358979323846f;
 
 struct Bubble {
@@ -170,13 +172,21 @@ static Vector3 ForwardFromAngles(float yawDeg, float pitchDeg) {
 }
 
 static Vector3 RandomBubblePositionInView(std::mt19937 &rng, const Camera3D &camera) {
-    const float margin = 90.0f;
+    const float margin = 120.0f;
     std::uniform_real_distribution<float> xDist(margin, std::max(margin, static_cast<float>(GetScreenWidth()) - margin));
-    std::uniform_real_distribution<float> yDist(margin, std::max(margin, static_cast<float>(GetScreenHeight()) - margin));
+    std::uniform_real_distribution<float> yDist(margin, std::max(margin, static_cast<float>(GetScreenHeight()) - margin * 1.35f));
     std::uniform_real_distribution<float> distanceDist(8.0f, 24.0f);
 
-    const Ray ray = GetScreenToWorldRay({xDist(rng), yDist(rng)}, camera);
-    return Vector3Add(camera.position, Vector3Scale(ray.direction, distanceDist(rng)));
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        const Ray ray = GetScreenToWorldRay({xDist(rng), yDist(rng)}, camera);
+        const Vector3 position = Vector3Add(camera.position, Vector3Scale(ray.direction, distanceDist(rng)));
+        if (position.y >= kMinBubbleHeight && position.y <= kMaxBubbleHeight) return position;
+    }
+
+    const Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 fallback = Vector3Add(camera.position, Vector3Scale(forward, 14.0f));
+    fallback.y = std::clamp(fallback.y, kMinBubbleHeight, kMaxBubbleHeight);
+    return fallback;
 }
 
 static Color BubbleColor(int index) {
@@ -198,14 +208,15 @@ static void ResetBubbles(std::vector<Bubble> &bubbles, std::mt19937 &rng, const 
 }
 
 static bool BubbleIsVisible(const Bubble &bubble, const Camera3D &camera) {
+    if (bubble.position.y < kMinBubbleHeight || bubble.position.y > kMaxBubbleHeight) return false;
+
     const Vector3 cameraForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
     const Vector3 toBubble = Vector3Normalize(Vector3Subtract(bubble.position, camera.position));
     if (Vector3DotProduct(cameraForward, toBubble) <= 0.0f) return false;
 
     const Vector2 screen = GetWorldToScreen(bubble.position, camera);
-    const float margin = bubble.radius * 80.0f;
-    return screen.x >= -margin && screen.x <= static_cast<float>(GetScreenWidth()) + margin &&
-           screen.y >= -margin && screen.y <= static_cast<float>(GetScreenHeight()) + margin;
+    return screen.x >= 0.0f && screen.x <= static_cast<float>(GetScreenWidth()) &&
+           screen.y >= 0.0f && screen.y <= static_cast<float>(GetScreenHeight());
 }
 
 static void ResetStats(Stats &stats) {
@@ -328,7 +339,7 @@ int main() {
     camera.target = Vector3Add(camera.position, ForwardFromAngles(yaw, pitch));
     ResetBubbles(bubbles, rng, camera);
 
-    double noVisibleBubblesSince = 0.0;
+    double lowVisibleBubblesSince = 0.0;
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_F11)) ToggleFullscreenWindow();
@@ -347,16 +358,18 @@ int main() {
         const Vector3 forward = ForwardFromAngles(yaw, pitch);
         camera.target = Vector3Add(camera.position, forward);
 
-        const bool anyVisible = std::any_of(bubbles.begin(), bubbles.end(), [&](const Bubble &bubble) {
+        const int visibleBubbles = static_cast<int>(std::count_if(bubbles.begin(), bubbles.end(), [&](const Bubble &bubble) {
             return BubbleIsVisible(bubble, camera);
-        });
-        if (anyVisible) {
-            noVisibleBubblesSince = 0.0;
-        } else if (noVisibleBubblesSince <= 0.0) {
-            noVisibleBubblesSince = GetTime();
-        } else if (GetTime() - noVisibleBubblesSince > 0.75) {
-            ResetBubbles(bubbles, rng, camera);
-            noVisibleBubblesSince = 0.0;
+        }));
+        if (visibleBubbles >= 3) {
+            lowVisibleBubblesSince = 0.0;
+        } else if (lowVisibleBubblesSince <= 0.0) {
+            lowVisibleBubblesSince = GetTime();
+        } else if (GetTime() - lowVisibleBubblesSince > 0.35) {
+            for (Bubble &bubble : bubbles) {
+                if (!BubbleIsVisible(bubble, camera)) bubble.position = RandomBubblePositionInView(rng, camera);
+            }
+            lowVisibleBubblesSince = 0.0;
         }
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
