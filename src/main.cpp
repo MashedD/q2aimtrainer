@@ -64,6 +64,8 @@ struct Config {
     std::string crosshair = "assets/ch9.png";
     float crosshairScale = 1.0f;
     Color crosshairColor = Color{110, 250, 255, 255};
+    std::string hitSound = "assets/marker.wav";
+    float hitSoundVolume = 1.0f;
     std::string skybox = "assets/space1";
     float skyboxSize = 96.0f;
     Color skyboxTint = WHITE;
@@ -71,6 +73,11 @@ struct Config {
 
 struct Crosshair {
     Texture2D texture{};
+    bool loaded = false;
+};
+
+struct HitSound {
+    Sound sound{};
     bool loaded = false;
 };
 
@@ -171,6 +178,8 @@ static json ConfigJson(const Config &config) {
         {"crosshair", config.crosshair},
         {"crosshair_scale", config.crosshairScale},
         {"crosshair_color", ColorJson(config.crosshairColor)},
+        {"hit_sound", config.hitSound},
+        {"hit_sound_volume", config.hitSoundVolume},
         {"skybox", config.skybox},
         {"skybox_size", config.skyboxSize},
         {"skybox_tint", ColorJson(config.skyboxTint)},
@@ -203,6 +212,8 @@ static Config LoadConfig() {
         config.crosshair = data.value("crosshair", config.crosshair);
         config.crosshairScale = data.value("crosshair_scale", config.crosshairScale);
         if (data.contains("crosshair_color")) config.crosshairColor = ParseColor(data["crosshair_color"], config.crosshairColor);
+        config.hitSound = data.value("hit_sound", config.hitSound);
+        config.hitSoundVolume = data.value("hit_sound_volume", config.hitSoundVolume);
         config.skybox = data.value("skybox", config.skybox);
         config.skyboxSize = data.value("skybox_size", config.skyboxSize);
         if (data.contains("skybox_tint")) config.skyboxTint = ParseColor(data["skybox_tint"], config.skyboxTint);
@@ -215,6 +226,7 @@ static Config LoadConfig() {
     config.mYaw = std::clamp(config.mYaw, 0.001f, 0.2f);
     config.mPitch = std::clamp(config.mPitch, 0.001f, 0.2f);
     config.crosshairScale = std::clamp(config.crosshairScale, 0.25f, 8.0f);
+    config.hitSoundVolume = std::clamp(config.hitSoundVolume, 0.0f, 2.0f);
     config.skyboxSize = std::clamp(config.skyboxSize, 32.0f, 512.0f);
     return config;
 }
@@ -223,6 +235,16 @@ static fs::path ResolveAppPath(const std::string &path) {
     fs::path result(path);
     if (result.is_relative()) result = fs::path(GetApplicationDirectory()) / result;
     return result;
+}
+
+static void LoadAppIcon() {
+    const fs::path iconPath = fs::path(GetApplicationDirectory()) / "assets" / "icon.png";
+    if (!fs::is_regular_file(iconPath)) return;
+    Image icon = LoadImage(iconPath.string().c_str());
+    if (icon.data) {
+        SetWindowIcon(icon);
+        UnloadImage(icon);
+    }
 }
 
 static Crosshair LoadCrosshair(const Config &config) {
@@ -239,6 +261,25 @@ static Crosshair LoadCrosshair(const Config &config) {
     crosshair.loaded = crosshair.texture.id != 0;
     if (!crosshair.loaded) std::cerr << "Failed to load crosshair: " << path << '\n';
     return crosshair;
+}
+
+static HitSound LoadHitSound(const Config &config) {
+    HitSound hitSound;
+    if (config.hitSound.empty()) return hitSound;
+    if (!IsAudioDeviceReady()) {
+        std::cerr << "Audio device is not ready; hit sound disabled\n";
+        return hitSound;
+    }
+
+    const fs::path path = ResolveAppPath(config.hitSound);
+    hitSound.sound = LoadSound(path.string().c_str());
+    hitSound.loaded = hitSound.sound.frameCount > 0;
+    if (hitSound.loaded) {
+        SetSoundVolume(hitSound.sound, config.hitSoundVolume);
+    } else {
+        std::cerr << "Failed to load hit sound: " << path << '\n';
+    }
+    return hitSound;
 }
 
 static fs::path SkyboxFacePath(const std::string &base, const char *suffix) {
@@ -536,13 +577,16 @@ static void DrawHud(const Stats &stats, const Config &config, const Skybox &skyb
 int main() {
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "q2aimtrainer");
+    LoadAppIcon();
     ToggleFullscreenWindow();
     DisableCursor();
     SetTargetFPS(240);
+    InitAudioDevice();
 
     Config config = LoadConfig();
     const ThemePalette &theme = Theme(config);
     Crosshair crosshair = LoadCrosshair(config);
+    HitSound hitSound = LoadHitSound(config);
     Skybox skybox = LoadSkybox(config);
 
     std::mt19937 rng(std::random_device{}());
@@ -599,6 +643,7 @@ int main() {
             const int hit = ShootBubble(camera, bubbles);
             if (hit >= 0) {
                 ++stats.hits;
+                if (hitSound.loaded) PlaySound(hitSound.sound);
                 bubbles[static_cast<size_t>(hit)].position = RandomBubblePositionInView(rng, camera);
             } else {
                 ++stats.misses;
@@ -619,6 +664,8 @@ int main() {
     }
 
     if (crosshair.loaded) UnloadTexture(crosshair.texture);
+    if (hitSound.loaded) UnloadSound(hitSound.sound);
     UnloadSkybox(skybox);
+    if (IsAudioDeviceReady()) CloseAudioDevice();
     CloseWindow();
 }

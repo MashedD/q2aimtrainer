@@ -7,6 +7,8 @@
   "crosshair": "assets/ch9.png",
   "crosshair_scale": 1.0,
   "crosshair_color": [110, 250, 255, 255],
+  "hit_sound": "assets/marker.wav",
+  "hit_sound_volume": 1.0,
   "skybox": "assets/space1",
   "skybox_size": 96.0,
   "skybox_tint": [255, 255, 255, 255]

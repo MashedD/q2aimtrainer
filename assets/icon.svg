@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="256" y2="256">
+      <stop offset="0%" stop-color="#0a1520"/>
+      <stop offset="100%" stop-color="#04080c"/>
+    </linearGradient>
+    <radialGradient id="bubble" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#50dcff" stop-opacity="0.35"/>
+      <stop offset="65%" stop-color="#50dcff" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#50dcff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#50dcff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#50dcff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="outerGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+
+  <!-- Outer glow ring -->
+  <circle cx="128" cy="128" r="92" fill="none" stroke="#50dcff" stroke-width="1.5" opacity="0.15"/>
+
+  <!-- Bubble glow -->
+  <circle cx="128" cy="128" r="80" fill="url(#bubble)"/>
+
+  <!-- Target circles -->
+  <circle cx="128" cy="128" r="72" fill="none" stroke="#50dcff" stroke-width="2" opacity="0.30"/>
+  <circle cx="128" cy="128" r="54" fill="none" stroke="#50dcff" stroke-width="1.5" opacity="0.25"/>
+  <circle cx="128" cy="128" r="36" fill="none" stroke="#50dcff" stroke-width="2" opacity="0.35"/>
+
+  <!-- Crosshair horizontal -->
+  <line x1="36" y1="128" x2="90" y2="128" stroke="#50dcff" stroke-width="2.5" filter="url(#outerGlow)"/>
+  <line x1="166" y1="128" x2="220" y2="128" stroke="#50dcff" stroke-width="2.5" filter="url(#outerGlow)"/>
+
+  <!-- Crosshair vertical -->
+  <line x1="128" y1="36" x2="128" y2="90" stroke="#50dcff" stroke-width="2.5" filter="url(#outerGlow)"/>
+  <line x1="128" y1="166" x2="128" y2="220" stroke="#50dcff" stroke-width="2.5" filter="url(#outerGlow)"/>
+
+  <!-- Crosshair center dot -->
+  <circle cx="128" cy="128" r="4" fill="#50dcff" filter="url(#outerGlow)"/>
+  <circle cx="128" cy="128" r="2" fill="#ffffff" opacity="0.8"/>
+
+  <!-- Small corner arcs for tech feel -->
+  <path d="M 78 78 L 94 78 L 94 94" fill="none" stroke="#50dcff" stroke-width="1.5" opacity="0.20"/>
+  <path d="M 178 78 L 162 78 L 162 94" fill="none" stroke="#50dcff" stroke-width="1.5" opacity="0.20"/>
+  <path d="M 78 178 L 94 178 L 94 162" fill="none" stroke="#50dcff" stroke-width="1.5" opacity="0.20"/>
+  <path d="M 178 178 L 162 178 L 162 162" fill="none" stroke="#50dcff" stroke-width="1.5" opacity="0.20"/>
+</svg>

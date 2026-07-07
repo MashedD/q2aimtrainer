@@ -46,6 +46,12 @@ add_executable(q2aimtrainer
 
 target_link_libraries(q2aimtrainer PRIVATE raylib nlohmann_json::nlohmann_json)
 
+add_custom_command(TARGET q2aimtrainer POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+          ${CMAKE_CURRENT_SOURCE_DIR}/assets
+          $<TARGET_FILE_DIR:q2aimtrainer>/assets
+)
+
 if (WIN32)
   target_compile_definitions(q2aimtrainer PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
