@@ -7,19 +7,22 @@ Stationary 3D Quake II-style aim trainer. Built with the same core stack as `q2m
 - Fullscreen 3D stationary aim trainer
 - Center-screen raycast shooting
 - Multiple random 3D bubbles active at once
-- Quake-style mouse constants: `m_yaw 0.022`, `m_pitch 0.022`
+- Quake II-style mouse constants: `m_yaw 0.022`, `m_pitch 0.022`
 - Default `fov 90`
 - JSON config beside the executable for FOV and mouse tuning
 - Themes: `cyber` and neon-green `matrix`
 - PNG crosshair with configurable scale and RGBA tint
 - Hit sound on successful bubble clicks
-- Quake-style six-face TGA skybox support
+- Quake II-style six-face TGA skybox support
+- Quake II-style ground friction, acceleration, air movement, and jumping
 - HUD with hits, misses, accuracy, time, and hits/min
 
 ## Controls
 
 - Mouse: aim
+- `WASD`: move
 - Left click: shoot
+- Right click: jump
 - `R`: reset session
 - `-` / `=`: decrease/increase sensitivity
 - `F11`: toggle fullscreen

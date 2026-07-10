@@ -42,6 +42,15 @@ constexpr float kBubbleRadius = 0.42f;
 constexpr float kMinBubbleHeight = 1.1f;
 constexpr float kMaxBubbleHeight = 6.5f;
 constexpr float kPi = 3.14159265358979323846f;
+constexpr float kPlayerEyeHeight = 1.7f;
+// Quake II pmove values use 10x this project's world scale.
+constexpr float kMaxSpeed = 30.0f;
+constexpr float kStopSpeed = 10.0f;
+constexpr float kAccelerate = 10.0f;
+constexpr float kAirAccelerate = 1.0f;
+constexpr float kMoveFriction = 6.0f;
+constexpr float kJumpForce = 27.0f;
+constexpr float kGravity = 80.0f;
 
 struct Bubble {
     Vector3 position{};
@@ -53,6 +62,11 @@ struct Stats {
     int hits = 0;
     int misses = 0;
     double startedAt = 0.0;
+};
+
+struct PlayerMove {
+    Vector3 velocity{};
+    bool grounded = true;
 };
 
 struct Config {
@@ -418,6 +432,81 @@ static Vector3 ForwardFromAngles(float yawDeg, float pitchDeg) {
     return Vector3Normalize({std::sin(yaw) * cp, std::sin(pitch), std::cos(yaw) * cp});
 }
 
+static float HorizontalLength(Vector3 v) {
+    return std::sqrt(v.x * v.x + v.z * v.z);
+}
+
+static Vector3 WishDir(float fmove, float smove, Vector3 forwardDir, Vector3 rightDir, float &wishLen) {
+    Vector3 wishdir = Vector3Add(Vector3Scale(rightDir, smove), Vector3Scale(forwardDir, fmove));
+    wishLen = HorizontalLength(wishdir);
+    if (wishLen > 0.0f) wishdir = Vector3Scale(wishdir, 1.0f / wishLen);
+    return wishdir;
+}
+
+static void ApplyGroundFriction(PlayerMove &move, float dt) {
+    const float speed = HorizontalLength(move.velocity);
+    if (speed < 0.1f) {
+        move.velocity.x = 0.0f;
+        move.velocity.z = 0.0f;
+        return;
+    }
+
+    const float control = std::max(speed, kStopSpeed);
+    const float newSpeed = std::max(0.0f, speed - control * kMoveFriction * dt);
+    const float scale = newSpeed / speed;
+    move.velocity.x *= scale;
+    move.velocity.z *= scale;
+}
+
+static void Accelerate(PlayerMove &move, Vector3 wishdir, float wishSpeed, float acceleration, float dt) {
+    if (wishSpeed <= 0.0f) return;
+
+    const float currentSpeed = move.velocity.x * wishdir.x + move.velocity.z * wishdir.z;
+    const float addSpeed = wishSpeed - currentSpeed;
+    if (addSpeed <= 0.0f) return;
+
+    float accelSpeed = acceleration * dt * wishSpeed;
+    if (accelSpeed > addSpeed) accelSpeed = addSpeed;
+    move.velocity.x += accelSpeed * wishdir.x;
+    move.velocity.z += accelSpeed * wishdir.z;
+}
+
+static void UpdatePlayerMove(PlayerMove &move, Camera3D &camera, Vector3 forwardDir, Vector3 rightDir, float dt) {
+    const float fmove = (IsKeyDown(KEY_W) ? 1.0f : 0.0f) - (IsKeyDown(KEY_S) ? 1.0f : 0.0f);
+    const float smove = (IsKeyDown(KEY_D) ? 1.0f : 0.0f) - (IsKeyDown(KEY_A) ? 1.0f : 0.0f);
+
+    float wishLen = 0.0f;
+    const Vector3 wishdir = WishDir(fmove, smove, forwardDir, rightDir, wishLen);
+    const float wishSpeed = wishLen > 0.0f ? kMaxSpeed : 0.0f;
+
+    move.grounded = camera.position.y <= kPlayerEyeHeight + 0.05f;
+    if (move.grounded) {
+        camera.position.y = kPlayerEyeHeight;
+        move.velocity.y = 0.0f;
+    }
+
+    // PM_CheckJump runs before friction, preserving horizontal speed on takeoff.
+    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && move.grounded) {
+        move.velocity.y += kJumpForce;
+        move.grounded = false;
+    }
+
+    if (move.grounded) {
+        ApplyGroundFriction(move, dt);
+        Accelerate(move, wishdir, wishSpeed, kAccelerate, dt);
+    } else {
+        Accelerate(move, wishdir, wishSpeed, kAirAccelerate, dt);
+        move.velocity.y -= kGravity * dt;
+    }
+
+    camera.position = Vector3Add(camera.position, Vector3Scale(move.velocity, dt));
+    if (camera.position.y < kPlayerEyeHeight) {
+        camera.position.y = kPlayerEyeHeight;
+        if (move.velocity.y < 0.0f) move.velocity.y = 0.0f;
+        move.grounded = true;
+    }
+}
+
 static Vector3 RandomBubblePositionInView(std::mt19937 &rng, const Camera3D &camera) {
     const float margin = 120.0f;
     std::uniform_real_distribution<float> xDist(margin, std::max(margin, static_cast<float>(GetScreenWidth()) - margin));
@@ -571,7 +660,7 @@ static void DrawHud(const Stats &stats, const Config &config, const Skybox &skyb
     std::snprintf(line, sizeof(line), "%s", skybox.status.c_str());
     DrawText(line, 34, 136, 20, skybox.loaded ? theme.hudMuted : theme.hudError);
 
-    DrawText("LMB shoot   R reset   -/= sens   F11 fullscreen   Esc quit", 18, GetScreenHeight() - 32, 18, Color{theme.hudMuted.r, theme.hudMuted.g, theme.hudMuted.b, 230});
+    DrawText("WASD move   LMB shoot   RMB jump   R reset   -/= sens   F10/Esc quit   F11 fullscreen", 18, GetScreenHeight() - 32, 18, Color{theme.hudMuted.r, theme.hudMuted.g, theme.hudMuted.b, 230});
 }
 
 int main() {
@@ -596,7 +685,7 @@ int main() {
     ResetStats(stats);
 
     Camera3D camera{};
-    camera.position = {0.0f, 1.7f, 0.0f};
+    camera.position = {0.0f, kPlayerEyeHeight, 0.0f};
     camera.up = {0.0f, 1.0f, 0.0f};
     camera.fovy = config.fov;
     camera.projection = CAMERA_PERSPECTIVE;
@@ -606,10 +695,16 @@ int main() {
     camera.target = Vector3Add(camera.position, ForwardFromAngles(yaw, pitch));
     ResetBubbles(bubbles, rng, camera, theme);
 
+    PlayerMove playerMove;
     double lowVisibleBubblesSince = 0.0;
 
-    while (!WindowShouldClose()) {
+    bool shouldQuit = false;
+    while (!shouldQuit && !WindowShouldClose()) {
         if (IsKeyPressed(KEY_F11)) ToggleFullscreenWindow();
+        if (IsKeyPressed(KEY_F10) || IsKeyPressed(KEY_ESCAPE)) {
+            shouldQuit = true;
+            continue;
+        }
         if (IsKeyPressed(KEY_R)) {
             ResetStats(stats);
             ResetBubbles(bubbles, rng, camera, theme);
@@ -623,6 +718,12 @@ int main() {
         pitch = std::clamp(pitch, -89.0f, 89.0f);
 
         const Vector3 forward = ForwardFromAngles(yaw, pitch);
+        const float yawRad = DegToRad(yaw);
+        const Vector3 forwardDir = {std::sin(yawRad), 0.0f, std::cos(yawRad)};
+        const Vector3 rightDir = Vector3CrossProduct(forwardDir, {0.0f, 1.0f, 0.0f});
+
+        const float dt = GetFrameTime();
+        UpdatePlayerMove(playerMove, camera, forwardDir, rightDir, dt);
         camera.target = Vector3Add(camera.position, forward);
 
         const int visibleBubbles = static_cast<int>(std::count_if(bubbles.begin(), bubbles.end(), [&](const Bubble &bubble) {
